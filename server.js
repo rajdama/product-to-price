@@ -1,4 +1,5 @@
 
+// ALL IMPORT FILES
 const express = require("express");
 const app = express();
 const fs = require("fs");
@@ -7,27 +8,35 @@ const axios = require("axios");
 const Papa = require("papaparse");
 const multer = require("multer");
 
+// DEFINING MIDDLEWARE FOR PARSING INCOMING REQUEST.
+app.use(express.json());
+
+// DEFINING PATH FOR STORING UPOADED FILE TEMPORARILY
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, "./upload/");
+    cb(null, uploadDirectory);
   },
   filename: function (req, file, cb) {
     cb(null, "save_" + file.originalname);
   },
 });
 
+// GLOBAL VARIABLE ASSIGNMENTS
+const uploadDirectory = "./upload";
 const upload = multer({ storage });
+let productDetails = [];
 
-app.use(express.json());
-
-let csvdata = [];
-
+// ENDPOINT
 app.post("/getPrice", upload.single("productList"), (req, res) => {
 
-  fs.createReadStream("./upload/save_product_list_info.csv")
+  // GETTING NAME OF UPLOADED FILE
+  let fileName = fs.readdirSync(uploadDirectory);
+
+  // READING AND STORING DATA FROM UPLOADED CSV FILE
+  fs.createReadStream(`${uploadDirectory}/${fileName}`)
     .pipe(parse({ delimiter: ",", from_line: 2 }))
     .on("data", function (row) {
-      csvdata.push(row);
+      productDetails.push(row);
     })
     .on("end", function () {
       console.log("finished");
@@ -36,25 +45,46 @@ app.post("/getPrice", upload.single("productList"), (req, res) => {
       console.log(error.message);
     });
 
+  // WAITING FOR SOMETIME AS fs.createReadStream IS ASYNCHRONOUS
   setTimeout(() => {
+
+    // PERFORMING API REQUEST FOR ALL PRODUCTS
     Promise.all(
-      csvdata.map(async (val) => {
+
+      // MAPPING THROUGH EACH PRODUCT
+      productDetails.map(async (val) => {
         let productData = await axios.get(
           `https://api.storerestapi.com/products/${val[0]}`
         );
         return [val[0], productData.data.data.price];
-      })
-    ).then((res) => {
-      res = [["product_code", "price"], ...res];
-      var csv = Papa.unparse(res);
-      fs.writeFileSync("./upload/save_product_list_info.csv", csv);
-    });
-  }, 1000);
+       })
+      )
+      .then((products) => {
+       
+      // STORING product_code AND price RECIEVED FROM API REQUESTS
+      products = [["product_code", "price"], ...products];
 
-  res.send("Connenction successful");
-  
+      // CONVERTING JSON DATA TO CSV DATA
+      var csv = Papa.unparse(products);
+
+      // SENDING UPDATED CSV DATA IN RESPONSE
+      res.send(csv);
+
+      // SETTING productDetails TO EMPTY ARRAY SO IT COULD STORE DATA FROM NEXT REQUEST 
+      productDetails = []
+
+      // DELETING UPLOADED FILE FROM UPLOADS DIRECTORY
+      fs.unlinkSync(`${uploadDirectory}/${fileName}`, function (err) {
+        if (err) return console.log(err);
+        console.log("file deleted successfully");
+      });
+      
+    });
+
+  }, 1000);
 });
 
+// STARTING THE SERVER
 app.listen("20", () => {
   console.log("listening on port 20");
 });
